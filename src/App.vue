@@ -289,32 +289,62 @@ function processOrders(orders) {
 
 // 抢单
 async function grabOrder(orderId) {
-  if (!orderId) return
+  if (!orderId) {
+    logApi(`⚠️ 抢单失败: 订单ID为空`)
+    return
+  }
+  
+  // 检查必要的配置
+  if (!clientId.value) {
+    logApi(`⚠️ 抢单失败: clientId未设置`)
+    logSys(`⚠️ 抢单失败: 缺少客户端ID配置`)
+    return
+  }
   
   logApi(`正在抢单: ${orderId}`)
+  logSys(`🚀 开始抢单: ${orderId}`)
+  
   try {
+    const requestBody = { clientId: clientId.value, orderId: String(orderId) }
+    logApi(`抢单请求参数: ${JSON.stringify(requestBody)}`)
+    logSys(`📤 发送抢单请求: clientId=${clientId.value}`)
+    
     const resp = await fetch('/api/grab-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: clientId.value, orderId: String(orderId) }),
+      body: JSON.stringify(requestBody),
     })
+    
+    logApi(`抢单响应状态: ${resp.status}`)
+    logSys(`📡 服务器响应状态: ${resp.status}`)
+    
     const data = await resp.json()
     logApi(`抢单结果: ${JSON.stringify(data)}`)
+    logSys(`📋 抢单响应数据: ${JSON.stringify(data)}`)
     
     // 检查抢单是否成功（状态码为200）
     if (data.code === 200) {
       logSys(`🎉 抢单成功！订单ID: ${orderId}`)
+      logSys(`✅ 成功响应: ${data.data || data.message || '抢单成功'}`)
       logApi(`✅ 抢单成功: ${data.data || '抢单成功'}`)
       
       // 停止WebSocket监控
       closeWebSocket()
-      // logSys('🛑 抢单成功，已自动停止监控')
+      logSys('🛑 抢单成功，已自动停止监控')
       
       // 弹窗提醒
       alert(`🎉 抢单成功！\n\n订单ID: ${orderId}\n响应: ${data.data || '抢单成功'}\n\n监控已自动停止。`)
+    } else {
+      logApi(`❌ 抢单失败: code=${data.code}, message=${data.message || data.msg || '未知错误'}`)
+      logSys(`❌ 抢单失败 [${data.code}]: ${data.message || data.msg || '服务器返回错误'}`)
+      if (data.data) {
+        logSys(`📄 详细信息: ${data.data}`)
+      }
     }
   } catch (e) {
     logApi(`抢单异常: ${e.message}`)
+    logSys(`❌ 抢单异常: ${e.message}`)
+    logSys(`🔧 建议检查网络连接或服务器状态`)
   }
 }
 
