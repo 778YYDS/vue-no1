@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onUnmounted, onMounted } from 'vue'
+import { ref, onUnmounted, onMounted, computed } from 'vue'
 
 // 配置项（暂存于 localStorage，后续可用于请求）
 const key = ref(localStorage.getItem('KEY') || '')
@@ -17,7 +17,7 @@ onMounted(async () => {
     const resp = await fetch('/api/get-ws-token')
     // 检查响应状态
     if (!resp.ok) {
-      logSys(`获取WebSocket Token失败: 服务器返回 ${resp.status}`)
+      // logSys(`获取WebSocket Token失败: 服务器返回 ${resp.status}`)
       return
     }
     
@@ -26,13 +26,13 @@ onMounted(async () => {
       const data = await resp.json()
       if (data?.wsToken) {
         wsToken.value = data.wsToken
-        logSys('已自动获取最新的WebSocket Token')
+        // logSys('已自动获取最新的WebSocket Token')
       }
     } catch (jsonError) {
-      logSys('API返回格式错误，无法获取WebSocket Token')
+      // logSys('API返回格式错误，无法获取WebSocket Token')
     }
   } catch (e) {
-    logSys(`获取WebSocket Token失败: ${e.message}`)
+    // logSys(`获取WebSocket Token失败: ${e.message}`)
   }
 })
 const wsConnection = ref(null)
@@ -42,6 +42,52 @@ const blacklist = ref(localStorage.getItem('BLACKLIST') || '1208万,机密,单�
 // 简单日志（顶部系统日志、底部接口日志，后续可替换为真实输出）
 const sysLogs = ref([])
 const apiLogs = ref([])
+
+// 日志最大条数限制，防止内存泄漏和页面卡顿
+const MAX_LOG_ENTRIES = 100
+
+// 订单去重记录，避免重复输出相同订单信息
+const processedOrders = ref(new Set())
+
+// 日志分页显示，提升性能
+const LOGS_PER_PAGE = 20
+const sysLogsPage = ref(1)
+const apiLogsPage = ref(1)
+
+// 计算显示的日志
+const displayedSysLogs = computed(() => {
+  const start = 0
+  const end = sysLogsPage.value * LOGS_PER_PAGE
+  return sysLogs.value.slice(start, end)
+})
+
+const displayedApiLogs = computed(() => {
+  const start = 0
+  const end = apiLogsPage.value * LOGS_PER_PAGE
+  return apiLogs.value.slice(start, end)
+})
+
+// 是否有更多日志可以加载
+const hasMoreSysLogs = computed(() => {
+  return sysLogs.value.length > sysLogsPage.value * LOGS_PER_PAGE
+})
+
+const hasMoreApiLogs = computed(() => {
+  return apiLogs.value.length > apiLogsPage.value * LOGS_PER_PAGE
+})
+
+// 加载更多日志
+function loadMoreSysLogs() {
+  if (hasMoreSysLogs.value) {
+    sysLogsPage.value++
+  }
+}
+
+function loadMoreApiLogs() {
+  if (hasMoreApiLogs.value) {
+    apiLogsPage.value++
+  }
+}
 
 function now() {
   const d = new Date()
@@ -57,13 +103,47 @@ function logSys(msg) {
     isSuccess: msg.includes('🎉') || msg.includes('抢单成功')
   }
   sysLogs.value.unshift(logEntry)
+  
+  // 限制日志条数，删除最旧的日志
+  if (sysLogs.value.length > MAX_LOG_ENTRIES) {
+    sysLogs.value = sysLogs.value.slice(0, MAX_LOG_ENTRIES)
+  }
 }
+
 function logApi(msg) {
   const logEntry = {
     text: `[${now()}] ${msg}`,
     isSuccess: msg.includes('✅') || msg.includes('抢单成功')
   }
   apiLogs.value.unshift(logEntry)
+  
+  // 限制日志条数，删除最旧的日志
+  if (apiLogs.value.length > MAX_LOG_ENTRIES) {
+    apiLogs.value = apiLogs.value.slice(0, MAX_LOG_ENTRIES)
+  }
+}
+
+// 清空日志功能
+function clearSysLogs() {
+  sysLogs.value = []
+  sysLogsPage.value = 1
+  // logSys('系统日志已清空')
+}
+
+function clearApiLogs() {
+  apiLogs.value = []
+  apiLogsPage.value = 1
+  logApi('接口日志已清空')
+}
+
+function clearAllLogs() {
+  sysLogs.value = []
+  apiLogs.value = []
+  sysLogsPage.value = 1
+  apiLogsPage.value = 1
+  // 同时清空订单记录，允许重新输出订单信息
+  processedOrders.value.clear()
+  // logSys('🔄 已清空所有日志和订单记录')
 }
 
 // 关闭WebSocket连接
@@ -84,15 +164,15 @@ async function connectWebSocket() {
       const data = await resp.json()
       if (data?.wsToken) {
         wsToken.value = data.wsToken
-        logSys('已获取最新的WebSocket Token')
+        // logSys('已获取最新的WebSocket Token')
       }
     }
   } catch (e) {
-    logSys(`获取WebSocket Token失败: ${e.message}`)
+    // logSys(`获取WebSocket Token失败: ${e.message}`)
   }
   
   if (!wsToken.value) {
-    logSys('⚠️ 未设置WebSocket Token，无法连接')
+    // logSys('⚠️ 未设置WebSocket Token，无法连接')
     return
   }
 
@@ -106,34 +186,35 @@ async function connectWebSocket() {
     wsConnection.value = ws
 
     ws.onopen = () => {
-      logSys('✅ WebSocket已连接')
+      // logSys('✅ WebSocket已连接')
       // 连接成功后发送join消息
       ws.send(JSON.stringify({"cmd":"join"}))
-      logSys('已发送 {"cmd":"join"} 消息')
+      // logSys('已发送 {"cmd":"join"} 消息')
     }
 
     ws.onmessage = (event) => {
        try {
          const data = JSON.parse(event.data)
-         logSys(`收到WebSocket消息: ${JSON.stringify(data).substring(0, 100)}...`)
          
          if (data.type === 'orders') {
+           // 不输出接收消息信息，直接处理订单
            processOrders(data.orders)
          }
+         // 其他类型消息不输出任何日志
        } catch (e) {
-         logSys(`WebSocket消息解析错误: ${e.message}`)
+         // 解析错误也不输出日志
        }
      }
 
     ws.onerror = (error) => {
-      logSys(`⚠️ WebSocket错误: ${error.message || '未知错误'}`)
+      // logSys(`⚠️ WebSocket错误: ${error.message || '未知错误'}`)
     }
 
     ws.onclose = () => {
-      logSys('WebSocket连接已关闭')
+      // logSys('WebSocket连接已关闭')
     }
   } catch (e) {
-    logSys(`⚠️ WebSocket连接异常: ${e.message}`)
+    // logSys(`⚠️ WebSocket连接异常: ${e.message}`)
   }
 }
 
@@ -156,35 +237,53 @@ function processOrders(orders) {
   const blacklistItems = blacklist.value.split(',').map(item => item.trim()).filter(Boolean)
   const priceLimitValue = parseFloat(priceLimit.value) || 0
   
+  // 统计新订单数量
+  let newOrderCount = 0
+  
   for (const order of orders) {
     const orderId = order.id
     const name = order.product_name || ''
     const priceStr = order.price || '0'
     const remark = order.remark || ''
     
-    let priceVal = 0
-    try {
-      priceVal = parseFloat(priceStr)
-    } catch (e) {
-      priceVal = 0
+    // 检查是否是新订单（未处理过的）
+    if (!processedOrders.value.has(orderId)) {
+      processedOrders.value.add(orderId)
+      newOrderCount++
+      
+      let priceVal = 0
+      try {
+        priceVal = parseFloat(priceStr)
+      } catch (e) {
+        priceVal = 0
+      }
+      
+      // 在系统日志中输出新订单信息
+      logSys(`📦 新订单 ${orderId}: ${name} | 价格: ¥${priceVal} | 备注: ${remark}`)
+      
+      const isBlacklisted = blacklistItems.some(item => name.includes(item))
+      const isPriceOk = priceVal > priceLimitValue
+      const isRemarkOk = remark === '无'
+      
+      logApi(`订单 ${orderId}: ${name}, 价格=${priceVal}, 备注=${remark}`)
+      
+      if (isPriceOk && !isBlacklisted && isRemarkOk) {
+        logApi(`🟢 符合条件订单: ${name}`)
+        logSys(`🎯 发现符合条件的订单: ${name} (¥${priceVal})`)
+        grabOrder(orderId)
+      } else {
+        const reasons = []
+        if (!isPriceOk) reasons.push(`价格过低(${priceVal}<=${priceLimitValue})`)
+        if (isBlacklisted) reasons.push('名称在黑名单中')
+        if (!isRemarkOk) reasons.push(`备注不符(${remark})`)
+        logApi(`🔴 不符合条件: ${reasons.join(', ')}`)
+      }
     }
-    
-    const isBlacklisted = blacklistItems.some(item => name.includes(item))
-    const isPriceOk = priceVal > priceLimitValue
-    const isRemarkOk = remark === '无'
-    
-    logApi(`订单 ${orderId}: ${name}, 价格=${priceVal}, 备注=${remark}`)
-    
-    if (isPriceOk && !isBlacklisted && isRemarkOk) {
-      logApi(`🟢 符合条件订单: ${name}`)
-      grabOrder(orderId)
-    } else {
-      const reasons = []
-      if (!isPriceOk) reasons.push(`价格过低(${priceVal}<=${priceLimitValue})`)
-      if (isBlacklisted) reasons.push('名称在黑名单中')
-      if (!isRemarkOk) reasons.push(`备注不符(${remark})`)
-      logApi(`🔴 不符合条件: ${reasons.join(', ')}`)
-    }
+  }
+  
+  // 如果有新订单，在系统日志中汇总
+  if (newOrderCount > 0) {
+    logSys(`📊 本次处理了 ${newOrderCount} 个新订单，总计已处理 ${processedOrders.value.size} 个订单`)
   }
 }
 
@@ -209,7 +308,7 @@ async function grabOrder(orderId) {
       
       // 停止WebSocket监控
       closeWebSocket()
-      logSys('🛑 抢单成功，已自动停止监控')
+      // logSys('🛑 抢单成功，已自动停止监控')
       
       // 弹窗提醒
       alert(`🎉 抢单成功！\n\n订单ID: ${orderId}\n响应: ${data.data || '抢单成功'}\n\n监控已自动停止。`)
@@ -236,17 +335,17 @@ async function start() {
       body: JSON.stringify({ wsToken: wsToken.value }),
     })
     if (saveTokenResp.ok) {
-      logSys('WebSocket Token已保存到后台，所有用户将共享此Token')
+      // logSys('WebSocket Token已保存到后台，所有用户将共享此Token')
     } else {
       // API可能未实现，但不影响主要功能
-      logSys(`保存WebSocket Token未成功: ${saveTokenResp.status}，但不影响监控功能`)
+      // logSys(`保存WebSocket Token未成功: ${saveTokenResp.status}，但不影响监控功能`)
     }
   } catch (e) {
     // 捕获错误但不阻止后续操作
-    logSys(`保存WebSocket Token失败: ${e.message}，但不影响监控功能`)
+    // logSys(`保存WebSocket Token失败: ${e.message}，但不影响监控功能`)
   }
   
-  logSys('配置已保存，本地已缓存。正在推送到后端...')
+  // logSys('配置已保存，本地已缓存。正在推送到后端...')
   try {
     const resp = await fetch('/api/config', {
       method: 'POST',
@@ -261,40 +360,91 @@ async function start() {
     })
     const data = await resp.json()
     if (resp.ok && data?.ok) {
-      logSys(`后端已更新配置，clientId=${clientId.value}`)
+      // logSys(`后端已更新配置，clientId=${clientId.value}`)
       
       // 启动WebSocket连接
       connectWebSocket()
     } else {
-      logSys(`后端更新失败：${data?.msg || resp.status}`)
+      // logSys(`后端更新失败：${data?.msg || resp.status}`)
     }
   } catch (e) {
-    logSys(`推送异常：${String(e)}`)
+    // logSys(`推送异常：${String(e)}`)
   }
 }
 
 // 停止监听
 function stop() {
   closeWebSocket()
-  logSys('已停止WebSocket监听')
+  // logSys('已停止WebSocket监听')
 }
 
 // 导入JSON配置
 function importConfig() {
-  const jsonText = prompt('请输入JSON配置文本:')
-  if (!jsonText) return
+  const inputText = prompt('请输入配置文本:\n1. JSON格式配置对象\n2. 或单独的TOKEN值')
+  if (!inputText) return
   
+  const trimmedInput = inputText.trim()
+  
+  // 检查是否是JWT token格式（以eyJ开头）
+  if (trimmedInput.startsWith('eyJ')) {
+    token.value = trimmedInput
+    // logSys('✅ 已导入TOKEN值')
+    return
+  }
+  
+  // 检查是否是简单的字符串（可能是其他配置项）
+  if (!trimmedInput.startsWith('{') && !trimmedInput.startsWith('[')) {
+    // 询问用户这是什么类型的配置
+    const configType = prompt('请选择配置类型:\n1. TOKEN\n2. KEY\n3. VERSION\n4. WS_TOKEN\n请输入数字(1-4):')
+    switch(configType) {
+      case '1':
+        token.value = trimmedInput
+        // logSys('✅ 已导入TOKEN值')
+        break
+      case '2':
+        key.value = trimmedInput
+        // logSys('✅ 已导入KEY值')
+        break
+      case '3':
+        version.value = trimmedInput
+        // logSys('✅ 已导入VERSION值')
+        break
+      case '4':
+        wsToken.value = trimmedInput
+        // logSys('✅ 已导入WS_TOKEN值')
+        break
+      default:
+        // logSys('⚠️ 未知的配置类型')
+    }
+    return
+  }
+  
+  // 尝试解析JSON格式
   try {
-    const config = JSON.parse(jsonText)
+    const config = JSON.parse(trimmedInput)
     
     // 提取关键信息并填充表单，确保都是字符串类型
-    if (config.key) key.value = String(config.key)
-    if (config.version) version.value = String(config.version)
-    if (config.token) token.value = String(config.token)
+    if (config.key) {
+      key.value = String(config.key)
+      // logSys('✅ 已导入KEY')
+    }
+    if (config.version) {
+      version.value = String(config.version)
+      // logSys('✅ 已导入VERSION')
+    }
+    if (config.token) {
+      token.value = String(config.token)
+      // logSys('✅ 已导入TOKEN')
+    }
+    if (config.wsToken) {
+      wsToken.value = String(config.wsToken)
+      // logSys('✅ 已导入WS_TOKEN')
+    }
     
-    logSys('✅ 已成功导入配置')
+    // logSys('✅ JSON配置导入完成')
   } catch (e) {
-    logSys(`⚠️ JSON解析错误: ${e.message}`)
+    // logSys(`⚠️ JSON解析错误: ${e.message}`)
+    // logSys('💡 提示: 请确保输入的是有效的JSON格式，或选择单独导入配置项')
   }
 }
 
@@ -349,19 +499,40 @@ onUnmounted(() => {
 
     <section class="logs">
       <div class="log-card">
-        <div class="log-title">系统日志</div>
+        <div class="log-header">
+          <div class="log-title">系统日志 ({{ sysLogs.length }}/{{ MAX_LOG_ENTRIES }})</div>
+          <button class="clear-btn" @click="clearSysLogs" v-if="sysLogs.length > 0">清空</button>
+        </div>
         <div class="log-body" v-if="sysLogs.length">
-          <pre v-for="(l, i) in sysLogs" :key="i" :class="{ 'log-success': l.isSuccess }">{{ l.text }}</pre>
+          <pre v-for="(l, i) in displayedSysLogs" :key="i" :class="{ 'log-success': l.isSuccess }">{{ l.text }}</pre>
+          <div class="load-more" v-if="hasMoreSysLogs">
+            <button class="load-more-btn" @click="loadMoreSysLogs">
+              加载更多 ({{ sysLogs.length - displayedSysLogs.length }} 条)
+            </button>
+          </div>
         </div>
         <div class="log-empty" v-else>待输出...</div>
       </div>
       <div class="log-card">
-        <div class="log-title">接口日志</div>
+        <div class="log-header">
+          <div class="log-title">接口日志 ({{ apiLogs.length }}/{{ MAX_LOG_ENTRIES }})</div>
+          <button class="clear-btn" @click="clearApiLogs" v-if="apiLogs.length > 0">清空</button>
+        </div>
         <div class="log-body" v-if="apiLogs.length">
-          <pre v-for="(l, i) in apiLogs" :key="i" :class="{ 'log-success': l.isSuccess }">{{ l.text }}</pre>
+          <pre v-for="(l, i) in displayedApiLogs" :key="i" :class="{ 'log-success': l.isSuccess }">{{ l.text }}</pre>
+          <div class="load-more" v-if="hasMoreApiLogs">
+            <button class="load-more-btn" @click="loadMoreApiLogs">
+              加载更多 ({{ apiLogs.length - displayedApiLogs.length }} 条)
+            </button>
+          </div>
         </div>
         <div class="log-empty" v-else>待输出...</div>
       </div>
+    </section>
+
+    <!-- 全局清空按钮 -->
+    <section class="log-actions" v-if="sysLogs.length > 0 || apiLogs.length > 0">
+      <button class="clear-all-btn" @click="clearAllLogs">清空所有日志</button>
     </section>
   </main>
 </template>
@@ -504,13 +675,81 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
-.log-title {
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: #fafafa;
+}
+
+.log-title {
   font-weight: 600;
   font-size: 14px;
   color: #1890ff;
+}
+
+.clear-btn {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: #ff4d4f;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.clear-btn:hover {
+  background: #ff7875;
+}
+
+.log-actions {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.clear-all-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  background: #ff4d4f;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s;
+  box-shadow: 0 2px 4px rgba(255, 77, 79, 0.2);
+}
+
+.clear-all-btn:hover {
+  background: #ff7875;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(255, 77, 79, 0.3);
+}
+
+.load-more {
+  text-align: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.load-more-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.load-more-btn:hover {
+  background: #40a9ff;
+  transform: translateY(-1px);
 }
 
 .log-body {
