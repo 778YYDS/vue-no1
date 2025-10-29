@@ -348,6 +348,29 @@ async function grabOrder(orderId) {
   }
 }
 
+// 保存wsToken到后台的单独函数
+async function saveWsToken() {
+  if (!wsToken.value) {
+    logSys('⚠️ WebSocket Token为空，无法保存')
+    return
+  }
+  
+  try {
+    const saveTokenResp = await fetch('/api/save-ws-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wsToken: wsToken.value }),
+    })
+    if (saveTokenResp.ok) {
+      logSys('✅ WebSocket Token已保存到后台，所有用户将共享此Token')
+    } else {
+      logSys(`❌ 保存WebSocket Token失败: ${saveTokenResp.status}`)
+    }
+  } catch (e) {
+    logSys(`❌ 保存WebSocket Token异常: ${e.message}`)
+  }
+}
+
 async function start() {
   localStorage.setItem('CLIENT_ID', clientId.value)
   localStorage.setItem('KEY', key.value)
@@ -356,24 +379,6 @@ async function start() {
   // wsToken不需要本地缓存，每次都从后端获取
   localStorage.setItem('PRICE_LIMIT', priceLimit.value)
   localStorage.setItem('BLACKLIST', blacklist.value)
-  
-  // 专门保存wsToken到后台，确保所有用户共享同一个wsToken
-  try {
-    const saveTokenResp = await fetch('/api/save-ws-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wsToken: wsToken.value }),
-    })
-    if (saveTokenResp.ok) {
-      // logSys('WebSocket Token已保存到后台，所有用户将共享此Token')
-    } else {
-      // API可能未实现，但不影响主要功能
-      // logSys(`保存WebSocket Token未成功: ${saveTokenResp.status}，但不影响监控功能`)
-    }
-  } catch (e) {
-    // 捕获错误但不阻止后续操作
-    // logSys(`保存WebSocket Token失败: ${e.message}，但不影响监控功能`)
-  }
   
   // logSys('配置已保存，本地已缓存。正在推送到后端...')
   try {
@@ -384,8 +389,8 @@ async function start() {
         clientId: clientId.value, 
         key: key.value, 
         version: version.value, 
-        token: token.value,
-        wsToken: wsToken.value  // 添加wsToken到后台提交
+        token: token.value
+        // 移除wsToken，不再在开始监控时提交
       }),
     })
     const data = await resp.json()
@@ -524,6 +529,7 @@ onUnmounted(() => {
         <button class="primary" @click="start">开始监听</button>
         <button class="secondary" @click="stop">停止监听</button>
         <button class="import" @click="importConfig">导入配置</button>
+        <button class="save-token" @click="saveWsToken">保存WS Token</button>
       </div>
     </section>
 
@@ -688,6 +694,15 @@ body {
 
 .actions .import:hover {
   background: #9254de;
+}
+
+.actions .save-token {
+  background: #52c41a;
+  color: white;
+}
+
+.actions .save-token:hover {
+  background: #73d13d;
 }
 
 .logs {
